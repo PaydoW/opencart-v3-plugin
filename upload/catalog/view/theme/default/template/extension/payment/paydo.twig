@@ -1,0 +1,17 @@
+<div class="buttons">
+    <div class="pull-right">
+        <button type="button" class="btn btn-primary" id="button_pay" onclick="paydo()">{{ button_pay }}</button>
+    </div>
+</div>
+<script>
+    function paydo() {
+        $('#button_pay').addClass('disabled');
+        $.get('{{ paydo_url }}')
+            .done(function(data) {
+                window.location.href = data;
+            })
+            .always(function() {
+                $('#button_pay').removeClass('disabled');
+            });
+    }
+</script>

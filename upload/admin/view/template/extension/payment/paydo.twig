@@ -1,0 +1,141 @@
+{{ header }}{{ column_left }}
+<div id="content">
+    <div class="page-header">
+        <div class="container-fluid">
+            <div class="pull-right">
+                <button type="submit" form="form-payment" data-toggle="tooltip" title="{{ button_save }}" class="btn btn-primary"><i class="fa fa-save"></i></button>
+                <a href="{{ cancel }}" data-toggle="tooltip" title="{{ button_cancel }}" class="btn btn-default"><i class="fa fa-reply"></i></a>
+            </div>
+            <h1>{{ heading_title }}</h1>
+            <ul class="breadcrumb">
+                {% for breadcrumb in breadcrumbs %}
+                    <li><a href="{{ breadcrumb.href }}">{{ breadcrumb.text }}</a></li>
+                {% endfor %}
+            </ul>
+        </div>
+    </div>
+    <div class="container-fluid">
+        {% if error_warning %}
+            <div class="alert alert-danger alert-dismissible"><i class="fa fa-exclamation-circle"></i> {{ error_warning }}
+                <button type="button" class="close" data-dismiss="alert">&times;</button>
+            </div>
+        {% endif %}
+        <div class="panel panel-default">
+            <div class="panel-heading">
+                <h3 class="panel-title"><i class="fa fa-pencil"></i> {{ text_edit }}</h3>
+            </div>
+            <div class="panel-body">
+                <form action="{{ action }}" method="post" enctype="multipart/form-data" id="form-payment" class="form-horizontal">                    
+                    <fieldset>
+                        <div class="form-group required">
+                            <label class="col-sm-2 control-label" for="entry-public_id">
+                                <span data-toggle="tooltip" title="{{ help_public_id }}">{{ entry_public_id }}</span>
+                            </label>
+                            <div class="col-sm-10">
+                                <input type="text" name="payment_paydo_public_id"
+                                       value="{{ payment_paydo_public_id }}"
+                                       placeholder="{{ entry_public_id }}"
+                                       autocomplete="off"
+                                       id="entry-public_id" class="form-control"/>
+                                {% if error_public_id %}
+                                    <div class="text-danger">{{ error_public_id }}</div>
+                                {% endif %}
+                            </div>
+                        </div>
+                        <div class="form-group required">
+                            <label class="col-sm-2 control-label" for="entry-secret_key">
+                                <span data-toggle="tooltip" title="{{ help_secret_key }}">{{ entry_secret_key }}</span>
+                            </label>
+                            <div class="col-sm-10">
+                                <input type="text" name="payment_paydo_secret_key"
+                                       value="{{ payment_paydo_secret_key }}"
+                                       placeholder="{{ entry_secret_key }}"
+                                       autocomplete="off"
+                                       id="entry-secret_key" class="form-control"/>
+                                {% if error_secret_key %}
+                                    <div class="text-danger">{{ error_secret_key }}</div>
+                                {% endif %}
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label class="col-sm-2 control-label" for="entry-order_status_wait">
+                                {{ entry_order_status_wait }}
+                            </label>
+                            <div class="col-sm-10">
+                                <select name="payment_paydo_order_status_wait" id="entry-order_status_wait"
+                                        class="form-control">
+                                    {% for status in order_statuses %}
+                                        <option value="{{ status.order_status_id }}" {% if payment_paydo_order_status_wait == status.order_status_id %}selected{% endif %}>{{ status.name }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label class="col-sm-2 control-label" for="entry-order_status_success">
+                                {{ entry_order_status_success }}
+                            </label>
+                            <div class="col-sm-10">
+                                <select name="payment_paydo_order_status_success" id="entry-order_status_success"
+                                        class="form-control">
+                                    {% for status in order_statuses %}
+                                        <option value="{{ status.order_status_id }}" {% if payment_paydo_order_status_success == status.order_status_id %}selected{% endif %}>{{ status.name }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label class="col-sm-2 control-label" for="entry-order_status_error">
+                                {{ entry_order_status_error }}
+                            </label>
+                            <div class="col-sm-10">
+                                <select name="payment_paydo_order_status_error" id="entry-order_status_error"
+                                        class="form-control">
+                                    {% for status in order_statuses %}
+                                        <option value="{{ status.order_status_id }}" {% if payment_paydo_order_status_error == status.order_status_id %}selected{% endif %}>{{ status.name }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label class="col-sm-2 control-label" for="entry-sort_order">{{ entry_sort_order }}</label>
+                            <div class="col-sm-10">
+                                <input type="text" name="payment_paydo_sort_order"
+                                       value="{{ payment_paydo_sort_order }}"
+                                       placeholder="{{ entry_sort_order }}"
+                                       autocomplete="off"
+                                       id="entry-sort_order" class="form-control"/>
+                                {% if error_sort_order %}
+                                    <div class="text-danger">{{ error_sort_order }}</div>
+                                {% endif %}
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label class="col-sm-2 control-label" for="entry-status">{{ entry_status }}</label>
+                            <div class="col-sm-10">
+                                <select name="payment_paydo_status" id="entry-status" class="form-control">
+                                    {% if payment_paydo_status %}
+                                        <option value="1" selected="selected">{{ text_enabled }}</option>
+                                        <option value="0">{{ text_disabled }}</option>
+                                    {% else %}
+                                        <option value="1">{{ text_enabled }}</option>
+                                        <option value="0" selected="selected">{{ text_disabled }}</option>
+                                    {% endif %}
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label class="col-sm-2 control-label" for="entry-ipn_url">IPN URL</label>
+                            <div class="col-sm-10">
+                                <input type="text"
+                                       value="{{ ipn_url }}"                                       
+                                       readonly
+                                       id="entry-ipn_url" class="form-control"/>
+                            </div>
+                        </div>
+                    </fieldset>                    
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{{ footer }}
