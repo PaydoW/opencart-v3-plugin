@@ -2,7 +2,7 @@
 
 $_['heading_title'] = 'Paydo';
 
-$_['text_paydo'] = '<a href="https://paydo.com" target="_blank"><img src="view/image/payment/paydo.png"></a>';
+$_['text_paydo'] = '<a href="https://paydo.com" target="_blank"><img style="max-width:150px;" src="view/image/payment/paydo.png"></a>';
 $_['text_extension'] = 'Extensions';
 $_['text_success'] = 'Success: You have modified Paydo settings!';
 $_['text_edit'] = 'Edit Paydo settings';
