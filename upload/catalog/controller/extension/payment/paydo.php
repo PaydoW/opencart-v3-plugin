@@ -96,7 +96,6 @@ class ControllerExtensionPaymentPaydo extends Controller {
 		$invoiceId = $this->makeRequest($request);
 
 		if ($invoiceId === '') {
-			$this->log->write('Paydo: invoice was not created');
 			$this->response->setOutput(json_encode(array(
 				'error' => 'Invoice not created'
 			)));
@@ -108,15 +107,11 @@ class ControllerExtensionPaymentPaydo extends Controller {
 
 	public function callback() {
 		if ($this->request->server['REQUEST_METHOD'] !== 'POST') {
-			$this->log->write('Paydo callback: invalid request method ' . $this->request->server['REQUEST_METHOD']);
 			return;
 		}
 
 		$raw = file_get_contents('php://input');
 		$callback = json_decode($raw, true);
-
-		$this->log->write('Paydo callback raw: ' . $raw);
-		$this->log->write('Paydo callback decoded: ' . print_r($callback, true));
 
 		if ($callback && isset($callback['invoice'])) {
 			$check = $this->callback_check($callback);
@@ -138,14 +133,8 @@ class ControllerExtensionPaymentPaydo extends Controller {
 							$orderId,
 							$this->config->get('payment_paydo_order_status_error')
 						);
-					} else {
-						$this->log->write('Paydo callback: unknown transaction state ' . $state);
 					}
-				} else {
-					$this->log->write('Paydo callback: missing orderId or state in transaction');
 				}
-			} else {
-				$this->log->write('Paydo callback error: ' . $check);
 			}
 		} else {
 			if (is_array($callback)
@@ -172,23 +161,17 @@ class ControllerExtensionPaymentPaydo extends Controller {
 							(int)$callback['orderId'],
 							$this->config->get('payment_paydo_order_status_error')
 						);
-					} else {
-						$this->log->write('Paydo callback: unknown legacy status ' . $callback['status']);
 					}
-				} else {
-					$this->log->write('Paydo legacy callback invalid signature');
 				}
-			} else {
-				$this->log->write('Paydo callback: invalid payload, no invoice and no legacy fields. Data: ' . $raw);
 			}
 		}
 	}
 
 	/**
-	 * Проверка структуры callback для нового формата (invoice + transaction)
+	 * Validates the callback structure for the new format (invoice + transaction).
 	 *
-	 * @param array $callback
-	 * @return string "valid" или текст ошибки
+	 * @param array $callback Callback request data.
+	 * @return string Returns "valid" if the validation passes, otherwise an error message.
 	 */
 	private function callback_check($callback) {
 		$invoiceId = isset($callback['invoice']['id']) ? $callback['invoice']['id'] : null;
@@ -213,7 +196,7 @@ class ControllerExtensionPaymentPaydo extends Controller {
 	}
 
 	/**
-	 * Создаёт Paydo invoice и возвращает его identifier (как в OC4)
+	 * Creates a Paydo invoice and returns its identifier
 	 *
 	 * @param array $request
 	 * @return string
@@ -236,7 +219,6 @@ class ControllerExtensionPaymentPaydo extends Controller {
 		$response = curl_exec($this->curl);
 
 		if ($response === false) {
-			$this->log->write('Paydo cURL error: ' . curl_error($this->curl));
 			curl_close($this->curl);
 			$this->curl = null;
 			return '';
@@ -247,18 +229,12 @@ class ControllerExtensionPaymentPaydo extends Controller {
 		$this->curl = null;
 
 		if ($code < 200 || $code >= 300) {
-			$this->log->write(
-				'Paydo Failed API request' . "\n" .
-				' HTTP Code: ' . $code . "\n" .
-				' Response: ' . print_r($response, true)
-			);
 			return '';
 		}
 
 		$json = json_decode($response, true);
 
 		if (!is_array($json)) {
-			$this->log->write('Paydo invalid JSON response: ' . print_r($response, true));
 			return '';
 		}
 
@@ -274,13 +250,11 @@ class ControllerExtensionPaymentPaydo extends Controller {
 			return (string)$id;
 		}
 
-		$this->log->write('Paydo: invoice identifier not found in response: ' . print_r($json, true));
-
 		return '';
 	}
 
 	/**
-	 * Подпись для создания инвойса (как в OC4)
+	 * Signature for invoice creation
 	 *
 	 * @param array $order
 	 * @return string
@@ -300,7 +274,7 @@ class ControllerExtensionPaymentPaydo extends Controller {
 	}
 
 	/**
-	 * Легаси подпись для старого формата callback (orderId + amount + currency + status)
+	 * Legacy signature for the old callback format (orderId + amount + currency + status)
 	 *
 	 * @param string|int $orderId
 	 * @param string|float $amount
