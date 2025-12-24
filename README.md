@@ -1,4 +1,4 @@
-Opencart v3 PayDo Payment Gateway
+Opencart v3 Paydo Payment Gateway
 =====================
 
 ## Brief Description
@@ -10,34 +10,67 @@ Add the ability to accept payments in Opencart v3 via Paydo.com.
 -  Opencart 3.0+
 
 
-## Installation
- 1. Download latest [release](https://github.com/PaydoW/opencart-v3-plugin/releases)
- 2. Unzip and upload folder to your site root directory from upload folder.   
- 2. Log in to your Opencart admin dashboard, navigate to the Extentions menu and click "Install" button over against Paydo plugin.
- 4. After plugin installed, click edit on Paydo plugin.
- 5. Configure and save your settings accordingly.
+## Installation Guide for Paydo in OpenCart 3 (via Admin Panel)
 
-You can issue  **Public key** and **Secret key** after register as merchant on PayDo.com.
-Opencart plugin work only with POST IPN request HTTP method.
+### 1. Download the Latest Version
+- Go to the [latest release](https://github.com/PaydoW/opencart-v3-plugin/releases).
+- Select the latest version from the list of releases (the one at the top is the most recent).
+- Download the `paydo_payment.ocmod.zip` file.
 
-Use below parameters to configure your PayDo project:
-* **Callback/IPN URL**: https://{replace-with-your-domain}/index.php?route=extension/payment/paydo/callback
+### 2. Install the Module via OpenCart Admin Panel
+1. Log in to your **OpenCart admin panel**.
+2. Navigate to **Extensions → Installer**.
+3. Click the **Upload** button and select the downloaded `paydo_payment.ocmod.zip` file.
+4. Wait for the installation to complete.
+
+### 3. Enable and Configure the Module
+1. Go to **Extensions → Extensions**.
+2. In the dropdown menu, select **Payments**.
+3. Find **Paydo Payment Gateway** and click the **Install** button.
+4. After installation, click the **Edit** button.
+5. Enter your **Public Key** and **Secret Key** (see the section below for details on how to obtain them).
+6. In the module settings, the **IPN URL** field will automatically generate a link for processing payments. Copy this link.
+7. Go to **Paydo.com → IPN → Add new IPN**, paste the copied link, and save it.
+
+### 4. Refresh Modifications
+1. Navigate to **Extensions → Modifications**.
+2. Click the **Refresh** button at the top right to apply changes.
+
+---
+
+## How to get Public/Secret Keys and configure IPN in Paydo
+
+### Public/Secret Keys
+1. Log in to your account on **Paydo.com**.
+2. Go to **Overview → Project (website) details**.
+3. Open the **General information** tab.
+4. Copy your **Public Key** and **Secret Key** and paste them into the module settings in OpenCart.
+
+### IPN (payment notifications)
+1. In your Paydo dashboard go to **IPN settings**.
+2. Click **Add new IPN**.
+3. Paste the **IPN URL** from the module settings in OpenCart.
+4. Save.
+
+> **Note:** Without correct IPN setup your OpenCart store will not automatically receive payment status updates.
+
+---
 
 ## Support
 
 * [Open an issue](https://github.com/PaydoW/opencart-v3-plugin/issues) if you are having issues with this plugin.
-* [PayDo Documentation](https://paydo.com/en/documentation/common/)
-* [Contact PayDo support](https://paydo.com/en/contact-us/)
+* [PayDo Documentation](https://github.com/PaydoW/paydo-api-doc)
+* [Contact PayDo support](https://paydo.com/contacts-page-customer-support/)
   
-**TIP**: When contacting support it will help us is you provide:
+**TIP**: When contacting support it will help us if you provide:
 
-* Opencart Version
+* WordPress and WooCommerce Version
 * Other plugins you have installed
   * Some plugins do not play nice
-* Configuration settings for the plugin (Most merchants take screen grabs)
+* Configuration settings for the plugin (Most merchants take screenshots)
 * Any log files that will help
   * Web server error logs
-* Screen grabs of error message if applicable.
+* Screenshots of error message if applicable.
 
 ## Contribute
 
@@ -54,6 +87,4 @@ which means if you would like to use this project's code in your own project you
 
 ## License
 
-Please refer to the 
-[LICENSE](https://github.com/PaydoW/opencart-v3-plugin/blob/master/LICENSE)
-file that came with this project.
+Please refer to the [LICENSE](https://github.com/PaydoW/opencart-v3-plugin/blob/master/LICENSE) file that came with this project.

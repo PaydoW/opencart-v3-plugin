@@ -1,0 +1,25 @@
+
+name: Build and Release OCMOD ZIP
+
+on:
+  push:
+    tags:
+      - 'v*'  # Trigger when a tag is pushed, for example v1.0.0
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Create OCMOD ZIP archive
+        run: |
+          zip -r paydo_payment.ocmod.zip upload/ README.md LICENSE
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: paydo_payment.ocmod.zip
+          token: ${{ secrets.GITHUB_TOKEN }}

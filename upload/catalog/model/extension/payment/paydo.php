@@ -45,25 +45,4 @@ class ModelExtensionPaymentPaydo extends Model {
 
 		return $method_data;
 	}
-
-	/**
-	 * @param $data
-	 */
-	public function addTransaction($data) {
-		$this->db->query("INSERT INTO `" . DB_PREFIX . "paydo_transactions` SET 
-			txid = '" . $this->db->escape($data['txid']) . "',
-			status = '" . $this->db->escape($data['status']) . "',
-			publicKey = '" . $this->db->escape($data['publicKey']) . "',
-			type = '" . $this->db->escape($data['type']) . "',
-			amount = '" . $this->db->escape($data['amount']) . "',
-			currency = '" . $this->db->escape($data['currency']) . "',
-			signature = '" . $this->db->escape($data['signature']) . "',
-			language = '" . $this->db->escape($data['language']) . "',
-			date = '" . $this->db->escape($data['date']) . "',
-			orderId = '" . $this->db->escape($data['orderId']) . "',
-			email = '" . $this->db->escape($data['email']) . "',
-			paydoId = '" . $this->db->escape($data['paydoId']) . "',
-			error = '" . $this->db->escape($data['error']) . "'
-		");
-	}
 }

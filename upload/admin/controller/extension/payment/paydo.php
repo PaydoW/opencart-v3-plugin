@@ -40,10 +40,9 @@ class ControllerExtensionPaymentPaydo extends Controller {
 			$data['error_warning'] = '';
 		}
 
-		$data = array(
-			'error_public_id'  => '',
-			'error_secret_key' => '',
-		);
+		$data['error_public_id']  = '';
+		$data['error_secret_key'] = '';
+
 		foreach ($this->error as $f => $v) {
 			$data['error_' . $f] = $v;
 		}
@@ -91,7 +90,8 @@ class ControllerExtensionPaymentPaydo extends Controller {
 			}
 		}
 
-        $data['ipn_url'] = HTTP_CATALOG . 'index.php?route=extension/payment/paydo/callback';
+		$catalog_url = $this->config->get('config_secure') ? HTTPS_CATALOG : HTTP_CATALOG;
+		$data['ipn_url'] = $catalog_url . 'index.php?route=extension/payment/paydo/callback';
 
 		$this->load->model('localisation/order_status');
 		$data['order_statuses'] = $this->model_localisation_order_status->getOrderStatuses();
@@ -128,7 +128,7 @@ class ControllerExtensionPaymentPaydo extends Controller {
 		);
 
 		foreach ($required_fields as $f) {
-			if (!$this->request->post['payment_paydo_' . $f]) {
+			if (empty($this->request->post['payment_paydo_' . $f])) {
 				$this->error[$f] = $this->language->get('error_' . $f);
 			}
 		}
