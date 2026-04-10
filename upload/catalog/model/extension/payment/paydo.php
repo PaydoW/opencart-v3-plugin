@@ -45,4 +45,37 @@ class ModelExtensionPaymentPaydo extends Model {
 
 		return $method_data;
 	}
+
+	public function saveInvoice($order_id, $invoice_id) {
+		$this->ensureInvoiceTable();
+
+		$this->db->query("REPLACE INTO `" . DB_PREFIX . "paydo_invoice` SET
+			`order_id` = '" . (int)$order_id . "',
+			`invoice_id` = '" . $this->db->escape($invoice_id) . "',
+			`date_added` = NOW(),
+			`date_modified` = NOW()");
+	}
+
+	public function getInvoiceIdByOrderId($order_id) {
+		$this->ensureInvoiceTable();
+
+		$query = $this->db->query("SELECT `invoice_id` FROM `" . DB_PREFIX . "paydo_invoice` WHERE `order_id` = '" . (int)$order_id . "'");
+
+		if ($query->num_rows) {
+			return (string)$query->row['invoice_id'];
+		}
+
+		return '';
+	}
+
+	private function ensureInvoiceTable() {
+		$this->db->query("CREATE TABLE IF NOT EXISTS `" . DB_PREFIX . "paydo_invoice` (
+			`order_id` INT(11) NOT NULL,
+			`invoice_id` VARCHAR(64) NOT NULL,
+			`date_added` DATETIME NOT NULL,
+			`date_modified` DATETIME NOT NULL,
+			PRIMARY KEY (`order_id`),
+			UNIQUE KEY `invoice_id` (`invoice_id`)
+		) ENGINE=MyISAM DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci");
+	}
 }

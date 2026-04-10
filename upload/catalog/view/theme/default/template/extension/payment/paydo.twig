@@ -8,6 +8,16 @@
         $('#button_pay').addClass('disabled');
         $.get('{{ paydo_url }}')
             .done(function(data) {
+                if (typeof data !== 'string') {
+                    return;
+                }
+
+                var expectedPrefix = 'https://checkout.paydo.com/';
+
+                if (data.indexOf(expectedPrefix) !== 0) {
+                    return;
+                }
+
                 window.location.href = data;
             })
             .always(function() {
