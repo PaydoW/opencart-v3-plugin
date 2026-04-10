@@ -104,7 +104,16 @@ class ControllerExtensionPaymentPaydo extends Controller {
 				$this->config->get('payment_paydo_order_status_wait')
 			);
 
-			$redirectUrl = "https://checkout.paydo.com/{$this->language->get('code')}/payment/invoice-preprocessing/{$invoiceId}";
+			$redirectUrl = $this->buildCheckoutUrl($invoiceId);
+
+			if ($redirectUrl === '') {
+				$this->logCallback('Rejected invoice redirect: invalid invoice identifier', array('invoice_id' => $invoiceId));
+				$this->response->setOutput(json_encode(array(
+					'error' => 'Invalid invoice identifier'
+				)));
+				return;
+			}
+
 			$this->response->setOutput(json_encode($redirectUrl));
 		}
 	}
@@ -252,7 +261,8 @@ class ControllerExtensionPaymentPaydo extends Controller {
 			$this->curl = curl_init();
 			curl_setopt($this->curl, CURLOPT_RETURNTRANSFER, true);
 			curl_setopt($this->curl, CURLOPT_HEADER, false);
-			curl_setopt($this->curl, CURLOPT_SSL_VERIFYPEER, false);
+			curl_setopt($this->curl, CURLOPT_SSL_VERIFYPEER, true);
+			curl_setopt($this->curl, CURLOPT_SSL_VERIFYHOST, 2);
 		}
 
 		curl_setopt($this->curl, CURLOPT_URL, $this->paydoApiBase . '/invoices/' . rawurlencode($invoiceId));
@@ -382,7 +392,8 @@ class ControllerExtensionPaymentPaydo extends Controller {
 		if (!$this->curl) {
 			$this->curl = curl_init();
 			curl_setopt($this->curl, CURLOPT_URL, 'https://api.paydo.com/v1/invoices/create');
-			curl_setopt($this->curl, CURLOPT_SSL_VERIFYPEER, false);
+			curl_setopt($this->curl, CURLOPT_SSL_VERIFYPEER, true);
+			curl_setopt($this->curl, CURLOPT_SSL_VERIFYHOST, 2);
 			curl_setopt($this->curl, CURLOPT_RETURNTRANSFER, true);
 			curl_setopt($this->curl, CURLOPT_HEADER, false);
 		}
@@ -414,7 +425,7 @@ class ControllerExtensionPaymentPaydo extends Controller {
 		}
 
 		if (isset($json['data']) && is_string($json['data']) && $json['data'] !== '') {
-			return $json['data'];
+			return $this->normalizeInvoiceId($json['data']);
 		}
 
 		$id = isset($json['data']['invoice']['identifier']) ? $json['data']['invoice']['identifier']
@@ -422,10 +433,36 @@ class ControllerExtensionPaymentPaydo extends Controller {
 			: (isset($json['identifier']) ? $json['identifier'] : ''));
 
 		if ($id !== '') {
-			return (string)$id;
+			return $this->normalizeInvoiceId($id);
 		}
 
 		return '';
+	}
+
+	private function normalizeInvoiceId($invoiceId) {
+		$invoiceId = trim((string)$invoiceId);
+
+		if (!$this->isValidInvoiceId($invoiceId)) {
+			return '';
+		}
+
+		return $invoiceId;
+	}
+
+	private function isValidInvoiceId($invoiceId) {
+		return $invoiceId !== ''
+			&& strlen($invoiceId) <= 64
+			&& preg_match('/^[A-Za-z0-9-]+$/', $invoiceId);
+	}
+
+	private function buildCheckoutUrl($invoiceId) {
+		$invoiceId = $this->normalizeInvoiceId($invoiceId);
+
+		if ($invoiceId === '') {
+			return '';
+		}
+
+		return 'https://checkout.paydo.com/' . rawurlencode($this->language->get('code')) . '/payment/invoice-preprocessing/' . rawurlencode($invoiceId);
 	}
 
 	/**
