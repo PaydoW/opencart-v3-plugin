@@ -1,0 +1,69 @@
+{{ header }}
+<div id="common-success" class="container">
+  <ul class="breadcrumb">
+    <li><a href="{{ continue }}">{{ heading_title }}</a></li>
+  </ul>
+  <div class="row">{{ column_left }}
+    {% if column_left and column_right %}
+      {% set class = 'col-sm-6' %}
+    {% elseif column_left or column_right %}
+      {% set class = 'col-sm-9' %}
+    {% else %}
+      {% set class = 'col-sm-12' %}
+    {% endif %}
+    <div id="content" class="{{ class }}">{{ content_top }}
+      <h1>{{ heading_title }}</h1>
+      <div id="paydo-result-message" class="alert alert-info">{{ text_status_wait }}</div>
+      <div class="buttons">
+        <div class="pull-right"><a href="{{ continue }}" class="btn btn-primary">{{ button_continue }}</a></div>
+      </div>
+      {{ content_bottom }}
+    </div>
+    {{ column_right }}
+  </div>
+</div>
+<script type="text/javascript"><!--
+(function($) {
+    var attempts = [0, 30000, 120000, 600000];
+    var message = $('#paydo-result-message');
+
+    function verify(index) {
+        $.ajax({
+            url: '{{ verify_url|escape('js') }}',
+            type: 'post',
+            dataType: 'json'
+        }).done(function(json) {
+            if (json && json.status === 'paid') {
+                message.removeClass('alert-info alert-warning alert-danger').addClass('alert-success').text('{{ text_status_paid|escape('js') }}');
+                window.location.href = json.redirect || '{{ success_url|escape('js') }}';
+                return;
+            }
+
+            if (json && json.status === 'failed') {
+                message.removeClass('alert-info alert-warning').addClass('alert-danger').text(json.message || '{{ text_status_failed|escape('js') }}');
+                return;
+            }
+
+            if (json && json.status === 'manual') {
+                message.removeClass('alert-info alert-danger').addClass('alert-warning').text(json.message || '{{ text_status_manual|escape('js') }}');
+                return;
+            }
+
+            if (index + 1 < attempts.length) {
+                window.setTimeout(function() { verify(index + 1); }, attempts[index + 1]);
+            } else {
+                message.removeClass('alert-info alert-danger').addClass('alert-warning').text('{{ text_status_manual|escape('js') }}');
+            }
+        }).fail(function() {
+            if (index + 1 < attempts.length) {
+                window.setTimeout(function() { verify(index + 1); }, attempts[index + 1]);
+            } else {
+                message.removeClass('alert-info alert-danger').addClass('alert-warning').text('{{ text_status_manual|escape('js') }}');
+            }
+        });
+    }
+
+    verify(0);
+})(jQuery);
+//--></script>
+{{ footer }}

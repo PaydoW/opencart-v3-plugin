@@ -1,3 +1,24 @@
+{% if methods_mode %}
+    <fieldset id="paydo-payment-methods" style="margin-bottom:15px;">
+        <legend style="font-size:16px; margin-bottom:10px;">{{ text_choose_method }}</legend>
+        {% if hosted_page_enabled %}
+            <label style="display:flex; align-items:flex-start; gap:10px; padding:10px; margin:6px 0; border:1px solid #ddd; border-radius:6px; cursor:pointer; font-weight:normal;">
+                <input type="radio" name="paydo_method" value="hosted" {% if option_count == 1 %}checked="checked"{% endif %}/>
+                <span><strong>{{ text_hosted_page }}</strong><br/><small class="text-muted">{{ text_hosted_page_description }}</small></span>
+            </label>
+        {% endif %}
+        {% for identifier, method in payment_methods %}
+            <label style="display:flex; align-items:center; gap:10px; padding:10px; margin:6px 0; border:1px solid #ddd; border-radius:6px; cursor:pointer; font-weight:normal;">
+                <input type="radio" name="paydo_method" value="{{ identifier|escape }}" {% if option_count == 1 %}checked="checked"{% endif %}/>
+                {% if method.logo %}
+                    <img src="{{ method.logo|escape }}" alt="" style="max-width:60px; max-height:24px; object-fit:contain;"/>
+                {% endif %}
+                <span>{{ method.title|escape }}</span>
+            </label>
+        {% endfor %}
+    </fieldset>
+{% endif %}
+<div id="paydo-error" class="alert alert-danger" style="display:none;"></div>
 <div class="buttons">
     <div class="pull-right">
         <button type="button" class="btn btn-primary" id="button_pay" onclick="paydo()">{{ button_pay }}</button>
@@ -5,23 +26,57 @@
 </div>
 <script>
     function paydo() {
-        $('#button_pay').addClass('disabled');
-        $.get('{{ paydo_url }}')
+        var button = $('#button_pay');
+        var error = $('#paydo-error');
+        var requestData = {};
+
+        error.hide().text('');
+
+        {% if methods_mode %}
+        var selectedMethod = $('input[name="paydo_method"]:checked').val();
+
+        if (!selectedMethod) {
+            error.text('{{ error_method_required|escape('js') }}').show();
+            return;
+        }
+
+        requestData.paydo_method = selectedMethod;
+        {% endif %}
+
+        button.prop('disabled', true).addClass('disabled');
+        $.ajax({
+            url: '{{ paydo_url|escape('js') }}',
+            type: 'post',
+            data: requestData,
+            dataType: 'json'
+        })
             .done(function(data) {
-                if (typeof data !== 'string') {
+                if (data && data.error) {
+                    error.text(data.error).show();
+                    return;
+                }
+
+                if (!data || typeof data.redirect !== 'string') {
+                    error.text('{{ error_payment|escape('js') }}').show();
                     return;
                 }
 
                 var expectedPrefix = 'https://checkout.paydo.com/';
 
-                if (data.indexOf(expectedPrefix) !== 0) {
+                var resultUrl = '{{ result_url|escape('js') }}';
+
+				if (data.redirect.indexOf(expectedPrefix) !== 0 && data.redirect.indexOf(resultUrl) !== 0) {
+                    error.text('{{ error_payment|escape('js') }}').show();
                     return;
                 }
 
-                window.location.href = data;
+				window.location.href = data.redirect;
+            })
+            .fail(function() {
+                error.text('{{ error_payment|escape('js') }}').show();
             })
             .always(function() {
-                $('#button_pay').removeClass('disabled');
+                button.prop('disabled', false).removeClass('disabled');
             });
     }
 </script>
