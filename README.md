@@ -1,90 +1,83 @@
-Opencart v3 Paydo Payment Gateway
-=====================
+# PayDo Payment Gateway for OpenCart 3
 
-## Brief Description
+PayDo payment extension for OpenCart 3.x with two redirect-based payment flows:
 
-Add the ability to accept payments in Opencart v3 via Paydo.com.
+- **PayDo Hosted Page** — PayDo shows all methods available to the customer. The invoice payload does not contain `paymentMethod`.
+- **Specific payment method** — the customer chooses a method synchronized from PayDo, and the invoice contains its numeric `paymentMethod` ID.
+
+Version **2.2.0** is fixed for this development cycle until release.
+
+The extension never collects card number, CVV, or expiry data. Card entry and 3DS remain on PayDo-hosted pages.
 
 ## Requirements
 
--  Opencart 3.0+
+- OpenCart 3.x
+- PHP cURL extension
+- HTTPS storefront and valid CA certificates recommended
 
+## Installation and update
 
-## Installation Guide for Paydo in OpenCart 3 (via Admin Panel)
+1. Back up the store files and database.
+2. In OpenCart admin, open **Extensions → Installer** and upload `paydo_payment.ocmod.zip`.
+3. Open **Extensions → Extensions → Payments**, install PayDo if needed, then edit it.
+4. Existing installations are upgraded in place when the settings page opens. Existing keys and order statuses are preserved, and Hosted Page remains the default flow.
+5. Open **Extensions → Modifications** and click **Refresh** if your installation uses modifications.
 
-### 1. Download the Latest Version
-- Go to the [latest release](https://github.com/PaydoW/opencart-v3-plugin/releases).
-- Select the latest version from the list of releases (the one at the top is the most recent).
-- Download the `paydo_payment.ocmod.zip` file.
+The package contains `upload/`, `install.xml`, this README, the changelog, and the license.
 
-### 2. Install the Module via OpenCart Admin Panel
-1. Log in to your **OpenCart admin panel**.
-2. Navigate to **Extensions → Installer**.
-3. Click the **Upload** button and select the downloaded `paydo_payment.ocmod.zip` file.
-4. Wait for the installation to complete.
+## Basic Hosted Page setup
 
-### 3. Enable and Configure the Module
-1. Go to **Extensions → Extensions**.
-2. In the dropdown menu, select **Payments**.
-3. Find **Paydo Payment Gateway** and click the **Install** button.
-4. After installation, click the **Edit** button.
-5. Enter your **Public Key** and **Secret Key** (see the section below for details on how to obtain them).
-6. In the module settings, the **IPN URL** field will automatically generate a link for processing payments. Copy this link.
-7. Go to **Paydo.com → IPN → Add new IPN**, paste the copied link, and save it.
+1. Enter the **Public key** and **Secret key** from the PayDo project.
+2. Keep **Payment method selection** disabled.
+3. Select pending, successful, and failed order statuses.
+4. Enable the extension and save.
+5. Copy the generated **IPN URL** into the IPN settings of the PayDo project.
 
-### 4. Refresh Modifications
-1. Navigate to **Extensions → Modifications**.
-2. Click the **Refresh** button at the top right to apply changes.
+With method selection disabled, any method value posted by a browser is ignored and the invoice is always created without `paymentMethod`.
 
----
+## Hosted Page plus specific methods
 
-## How to get Public/Secret Keys and configure IPN in Paydo
+1. Enable **Payment method selection**.
+2. Choose whether **PayDo Hosted Page** should remain available as its own checkout option.
+3. Enter **Project ID** and **JWT token**.
+4. Click **Sync from PayDo**. Saving the form first is not required.
+5. Search by method title or ID, select the required methods, and save.
 
-### Public/Secret Keys
-1. Log in to your account on **Paydo.com**.
-2. Go to **Overview → Project (website) details**.
-3. Open the **General information** tab.
-4. Copy your **Public Key** and **Secret Key** and paste them into the module settings in OpenCart.
+Newly synchronized methods are not enabled automatically. Previously selected methods remain selected if PayDo still returns them; removed methods cannot be used at checkout. Internet-acquiring IDs are never hardcoded and always come from the project-specific PayDo API response.
 
-### IPN (payment notifications)
-1. In your Paydo dashboard go to **IPN settings**.
-2. Click **Add new IPN**.
-3. Paste the **IPN URL** from the module settings in OpenCart.
-4. Save.
+The JWT is used only for method synchronization. Invoice creation and invoice verification do not send it.
 
-> **Note:** Without correct IPN setup your OpenCart store will not automatically receive payment status updates.
+## Payment confirmation and retries
 
----
+The customer-facing result and failure URLs are informational and never mark an order as paid. Before changing an order status, the extension reads the invoice from PayDo v3 and validates its invoice ID, order ID, amount, currency, and transaction identifier when available.
+
+An invoice confirmed as paid takes precedence over a temporarily pending transaction state. Temporary network errors or unpaid invoices remain pending and use bounded increasing retry intervals. Exhausted checks are visible under the **Invoices** button on the PayDo settings page for manual review. Repeated callbacks and repeated checkout confirmations reuse the stored invoice and avoid duplicate status transitions. An active invoice keeps its original method; choosing another method shows an explanatory error instead of opening the wrong payment form. Failed invoices can be retried.
+
+Both ordinary `invoice.txid` / `transaction.txid` and card `transaction.id` notifications are supported. Callback states alone never mark an order as failed; terminal changes require confirmation from PayDo. Once paid, an invoice cannot be downgraded by a delayed callback.
+
+## API endpoints
+
+- `POST https://api.paydo.com/v3/invoices/create`
+- `GET https://api.paydo.com/v3/invoices/{invoiceId}`
+- `GET https://api.paydo.com/v3/instrument-settings/payment-methods/available-for-application/{projectId}`
+- Customer redirect: `https://checkout.paydo.com/{locale}/payment/invoice-preprocessing/{invoiceId}`
+
+## Tests
+
+Run from the repository root:
+
+```sh
+php tests/paydo_logic_test.php
+php tests/paydo_admin_test.php
+find upload -name '*.php' -print0 | xargs -0 -n1 php -l
+```
 
 ## Support
 
-* [Open an issue](https://github.com/PaydoW/opencart-v3-plugin/issues) if you are having issues with this plugin.
-* [PayDo Documentation](https://github.com/PaydoW/paydo-api-doc)
-* [Contact PayDo support](https://paydo.com/contacts-page-customer-support/)
-  
-**TIP**: When contacting support it will help us if you provide:
-
-* WordPress and WooCommerce Version
-* Other plugins you have installed
-  * Some plugins do not play nice
-* Configuration settings for the plugin (Most merchants take screenshots)
-* Any log files that will help
-  * Web server error logs
-* Screenshots of error message if applicable.
-
-## Contribute
-
-Would you like to help with this project?  Great!  You don't have to be a developer, either.
-If you've found a bug or have an idea for an improvement, please open an
-[issue](https://github.com/PaydoW/opencart-v3-plugin/issues) and tell us about it.
-
-If you *are* a developer wanting contribute an enhancement, bugfix or other patch to this project,
-please fork this repository and submit a pull request detailing your changes.  We review all PRs!
-
-This open source project is released under the [MIT license](http://opensource.org/licenses/MIT)
-which means if you would like to use this project's code in your own project you are free to do so.
-
+- [PayDo documentation](https://docs.paydo.com/)
+- [Open an issue](https://github.com/PaydoW/opencart-v3-plugin/issues)
+- [PayDo support](https://paydo.com/contacts-page-customer-support/)
 
 ## License
 
-Please refer to the [LICENSE](https://github.com/PaydoW/opencart-v3-plugin/blob/master/LICENSE) file that came with this project.
+MIT. See [LICENSE](LICENSE).

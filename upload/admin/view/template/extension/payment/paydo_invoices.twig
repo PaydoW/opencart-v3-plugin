@@ -1,0 +1,68 @@
+{{ header }}{{ column_left }}
+<div id="content">
+    <div class="page-header">
+        <div class="container-fluid">
+            <div class="pull-right">
+                <a href="{{ back }}" data-toggle="tooltip" title="{{ button_back }}" class="btn btn-default"><i class="fa fa-reply"></i></a>
+            </div>
+            <h1>{{ heading_invoices }}</h1>
+            <ul class="breadcrumb">
+                {% for breadcrumb in breadcrumbs %}
+                    <li><a href="{{ breadcrumb.href }}">{{ breadcrumb.text }}</a></li>
+                {% endfor %}
+            </ul>
+        </div>
+    </div>
+    <div class="container-fluid">
+        <div class="panel panel-default">
+            <div class="panel-heading">
+                <h3 class="panel-title"><i class="fa fa-list"></i> {{ heading_invoices }}</h3>
+            </div>
+            <div class="panel-body">
+                <div class="table-responsive">
+                    <table class="table table-bordered table-hover">
+                        <thead>
+                            <tr>
+                                <td>{{ column_order_id }}</td>
+                                <td>{{ column_invoice_id }}</td>
+                                <td>{{ column_payment_method }}</td>
+                                <td>{{ column_txid }}</td>
+                                <td>{{ column_amount }}</td>
+                                <td>{{ column_currency }}</td>
+                                <td>{{ column_invoice_status }}</td>
+                                <td>{{ column_transaction_state }}</td>
+                                <td>{{ column_retry_count }}</td>
+                                <td>{{ column_last_error }}</td>
+                                <td>{{ column_date_added }}</td>
+                                <td>{{ column_date_modified }}</td>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% if invoice_records %}
+                                {% for invoice in invoice_records %}
+                                    <tr>
+                                        <td>{{ invoice.order_id|escape }}</td>
+                                        <td>{{ invoice.invoice_id|escape }}</td>
+                                        <td>{{ invoice.payment_method|escape }}</td>
+                                        <td>{{ invoice.txid|escape }}</td>
+                                        <td>{{ invoice.amount|escape }}</td>
+                                        <td>{{ invoice.currency|escape }}</td>
+                                        <td>{{ invoice.invoice_status|escape }}</td>
+                                        <td>{{ invoice.transaction_state|escape }}</td>
+                                        <td>{{ invoice.retry_count|escape }}</td>
+                                        <td>{{ invoice.last_error|escape }}</td>
+                                        <td>{{ invoice.date_added|escape }}</td>
+                                        <td>{{ invoice.date_modified|escape }}</td>
+                                    </tr>
+                                {% endfor %}
+                            {% else %}
+                                <tr><td colspan="12" class="text-center">{{ text_no_results }}</td></tr>
+                            {% endif %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{{ footer }}

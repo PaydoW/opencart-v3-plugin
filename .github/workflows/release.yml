@@ -16,7 +16,7 @@ jobs:
 
       - name: Create OCMOD ZIP archive
         run: |
-          zip -r paydo_payment.ocmod.zip upload/ README.md LICENSE
+          zip -r paydo_payment.ocmod.zip upload/ install.xml README.md CHANGELOG.md LICENSE
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

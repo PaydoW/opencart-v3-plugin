@@ -3,6 +3,7 @@
     <div class="page-header">
         <div class="container-fluid">
             <div class="pull-right">
+                <a href="{{ invoices }}" data-toggle="tooltip" title="{{ button_invoices }}" class="btn btn-info"><i class="fa fa-list"></i></a>
                 <button type="submit" form="form-payment" data-toggle="tooltip" title="{{ button_save }}" class="btn btn-primary"><i class="fa fa-save"></i></button>
                 <a href="{{ cancel }}" data-toggle="tooltip" title="{{ button_cancel }}" class="btn btn-default"><i class="fa fa-reply"></i></a>
             </div>
@@ -33,7 +34,7 @@
                             </label>
                             <div class="col-sm-10">
                                 <input type="text" name="payment_paydo_public_id"
-                                       value="{{ payment_paydo_public_id }}"
+                                       value="{{ payment_paydo_public_id|escape }}"
                                        placeholder="{{ entry_public_id }}"
                                        autocomplete="off"
                                        id="entry-public_id" class="form-control"/>
@@ -48,13 +49,108 @@
                             </label>
                             <div class="col-sm-10">
                                 <input type="text" name="payment_paydo_secret_key"
-                                       value="{{ payment_paydo_secret_key }}"
+                                       value="{{ payment_paydo_secret_key|escape }}"
                                        placeholder="{{ entry_secret_key }}"
                                        autocomplete="off"
                                        id="entry-secret_key" class="form-control"/>
                                 {% if error_secret_key %}
                                     <div class="text-danger">{{ error_secret_key }}</div>
                                 {% endif %}
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label class="col-sm-2 control-label" for="entry-methods-mode">
+                                <span data-toggle="tooltip" title="{{ help_methods_mode }}">{{ entry_methods_mode }}</span>
+                            </label>
+                            <div class="col-sm-10">
+                                <select name="payment_paydo_methods_mode" id="entry-methods-mode" class="form-control">
+                                    {% if payment_paydo_methods_mode %}
+                                        <option value="1" selected="selected">{{ text_enabled }}</option>
+                                        <option value="0">{{ text_disabled }}</option>
+                                    {% else %}
+                                        <option value="1">{{ text_enabled }}</option>
+                                        <option value="0" selected="selected">{{ text_disabled }}</option>
+                                    {% endif %}
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-group paydo-methods-setting">
+                            <label class="col-sm-2 control-label" for="entry-hosted-page">
+                                <span data-toggle="tooltip" title="{{ help_hosted_page }}">{{ entry_hosted_page }}</span>
+                            </label>
+                            <div class="col-sm-10">
+                                <select name="payment_paydo_hosted_page_enabled" id="entry-hosted-page" class="form-control">
+                                    {% if payment_paydo_hosted_page_enabled %}
+                                        <option value="1" selected="selected">{{ text_enabled }}</option>
+                                        <option value="0">{{ text_disabled }}</option>
+                                    {% else %}
+                                        <option value="1">{{ text_enabled }}</option>
+                                        <option value="0" selected="selected">{{ text_disabled }}</option>
+                                    {% endif %}
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-group paydo-methods-setting">
+                            <label class="col-sm-2 control-label" for="entry-project-id">
+                                <span data-toggle="tooltip" title="{{ help_project_id }}">{{ entry_project_id }}</span>
+                            </label>
+                            <div class="col-sm-10">
+                                <input type="text" name="payment_paydo_project_id"
+                                       value="{{ payment_paydo_project_id|escape }}"
+                                       placeholder="{{ entry_project_id }}"
+                                       autocomplete="off"
+                                       id="entry-project-id" class="form-control"/>
+                            </div>
+                        </div>
+                        <div class="form-group paydo-methods-setting">
+                            <label class="col-sm-2 control-label" for="entry-jwt-token">
+                                <span data-toggle="tooltip" title="{{ help_jwt_token }}">{{ entry_jwt_token }}</span>
+                            </label>
+                            <div class="col-sm-10">
+                                <textarea name="payment_paydo_jwt_token"
+                                          placeholder="{{ entry_jwt_token }}"
+                                          autocomplete="off"
+                                          rows="3"
+                                          id="entry-jwt-token" class="form-control">{{ payment_paydo_jwt_token|escape }}</textarea>
+                            </div>
+                        </div>
+                        <div class="form-group paydo-methods-setting">
+                            <label class="col-sm-2 control-label">{{ entry_sync_methods }}</label>
+                            <div class="col-sm-10">
+                                <button type="button" id="button-sync-methods" class="btn btn-default">
+                                    <i class="fa fa-refresh"></i> {{ button_sync_methods }}
+                                </button>
+                                <span id="sync-methods-status" class="help-block"></span>
+                                <p class="help-block">{{ help_sync_methods }}</p>
+                            </div>
+                        </div>
+                        <div class="form-group paydo-methods-setting">
+                            <label class="col-sm-2 control-label">{{ entry_enabled_methods }}</label>
+                            <div class="col-sm-10">
+                                <input type="text" id="paydo-method-search" class="form-control"
+                                       placeholder="{{ entry_search_method }}" style="margin-bottom:10px;"/>
+                                <div id="paydo-methods-list" class="well well-sm" style="max-height:320px; overflow:auto; margin-bottom:0;">
+                                    {% if available_methods %}
+                                        {% for identifier, method in available_methods %}
+                                            <label class="paydo-method-row" data-search="{{ method.title|lower|escape }} {{ identifier|escape }}"
+                                                   style="display:flex; align-items:center; gap:10px; padding:6px; font-weight:normal;">
+                                                <input type="checkbox" name="payment_paydo_enabled_methods[]"
+                                                       value="{{ identifier|escape }}"
+                                                       {% if identifier in payment_paydo_enabled_methods %}checked="checked"{% endif %}/>
+                                                {% if method.logo %}
+                                                    <img src="{{ method.logo|escape }}" alt="" style="max-width:60px; max-height:24px;"/>
+                                                {% endif %}
+                                                <span><strong>{{ method.title|escape }}</strong> <small class="text-muted">#{{ identifier|escape }}</small></span>
+                                            </label>
+                                        {% endfor %}
+                                    {% else %}
+                                        <div class="paydo-no-methods text-muted">{{ text_no_methods }}</div>
+                                    {% endif %}
+                                </div>
+                                {% if error_enabled_methods %}
+                                    <div class="text-danger">{{ error_enabled_methods }}</div>
+                                {% endif %}
+                                <p class="help-block">{{ help_enabled_methods }}</p>
                             </div>
                         </div>
                         <div class="form-group">
@@ -127,7 +223,7 @@
                             <label class="col-sm-2 control-label" for="entry-ipn_url">IPN URL</label>
                             <div class="col-sm-10">
                                 <input type="text"
-                                       value="{{ ipn_url }}"
+                                       value="{{ ipn_url|escape }}"
                                        readonly
                                        id="entry-ipn_url" class="form-control"/>
                             </div>
@@ -138,4 +234,92 @@
         </div>
     </div>
 </div>
+<script type="text/javascript"><!--
+(function($) {
+    var strings = {
+        empty: '{{ text_no_methods|escape('js') }}',
+        syncError: '{{ error_sync_request|escape('js') }}'
+    };
+
+    function togglePaydoMethodsSettings() {
+        $('.paydo-methods-setting').toggle($('#entry-methods-mode').val() === '1');
+    }
+
+    $('#entry-methods-mode').on('change', togglePaydoMethodsSettings);
+    togglePaydoMethodsSettings();
+
+    $('#paydo-method-search').on('input', function() {
+        var query = ($(this).val() || '').toLowerCase().trim();
+
+        $('.paydo-method-row').each(function() {
+            $(this).toggle(!query || ($(this).data('search') || '').indexOf(query) !== -1);
+        });
+    });
+
+    function renderMethods(methods) {
+        var list = $('#paydo-methods-list');
+        var checked = {};
+
+        list.find('input[name="payment_paydo_enabled_methods[]"]:checked').each(function() {
+            checked[String(this.value)] = true;
+        });
+        list.empty();
+
+        if (!methods || !methods.length) {
+            $('<div class="paydo-no-methods text-muted"></div>').text(strings.empty).appendTo(list);
+            return;
+        }
+
+        $.each(methods, function(index, method) {
+            var identifier = String(method.identifier || '');
+            var title = String(method.title || ('#' + identifier));
+            var row = $('<label class="paydo-method-row"></label>')
+                .attr('data-search', (title + ' ' + identifier).toLowerCase())
+                .css({display: 'flex', alignItems: 'center', gap: '10px', padding: '6px', fontWeight: 'normal'});
+
+            $('<input type="checkbox" name="payment_paydo_enabled_methods[]"/>')
+                .val(identifier)
+                .prop('checked', !!checked[identifier])
+                .appendTo(row);
+
+            if (method.logo) {
+                $('<img alt=""/>').attr('src', String(method.logo)).css({maxWidth: '60px', maxHeight: '24px'}).appendTo(row);
+            }
+
+            $('<span></span>').append($('<strong></strong>').text(title), ' ', $('<small class="text-muted"></small>').text('#' + identifier)).appendTo(row);
+            row.appendTo(list);
+        });
+    }
+
+    $('#button-sync-methods').on('click', function() {
+        var button = $(this);
+        var status = $('#sync-methods-status');
+
+        button.prop('disabled', true);
+        status.removeClass('text-danger text-success').text('{{ text_syncing|escape('js') }}');
+
+        $.ajax({
+            url: '{{ sync_methods_url|escape('js') }}',
+            type: 'post',
+            dataType: 'json',
+            data: {
+                project_id: $('#entry-project-id').val(),
+                jwt_token: $('#entry-jwt-token').val()
+            }
+        }).done(function(json) {
+            if (json && json.success) {
+                renderMethods(json.methods || []);
+                status.addClass('text-success').text(json.success);
+                return;
+            }
+
+            status.addClass('text-danger').text(json && json.error ? json.error : strings.syncError);
+        }).fail(function() {
+            status.addClass('text-danger').text(strings.syncError);
+        }).always(function() {
+            button.prop('disabled', false);
+        });
+    });
+})(jQuery);
+//--></script>
 {{ footer }}

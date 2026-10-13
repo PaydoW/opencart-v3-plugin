@@ -3,123 +3,260 @@
 /**
  * Class ControllerExtensionPaymentPaydo
  *
- * @property Language		   $language
- * @property \Cart\Currency	 $currency
- * @property Config			 $config
- * @property Url				$url
- * @property Loader			 $load
- * @property Session			$session
- * @property Request			$request
- * @property Response		   $response
- *
- * @property ModelCheckoutOrder $model_checkout_order
+ * @property Language                   $language
+ * @property Config                     $config
+ * @property Url                        $url
+ * @property Loader                     $load
+ * @property Session                    $session
+ * @property Request                    $request
+ * @property Response                   $response
+ * @property ModelCheckoutOrder         $model_checkout_order
  * @property ModelExtensionPaymentPaydo $model_extension_payment_paydo
  */
 class ControllerExtensionPaymentPaydo extends Controller {
 	/** @var resource|null */
 	private $curl = null;
-	private $paydoApiBase = 'https://api.paydo.com/v1';
+	private $paydoApiBase = 'https://api.paydo.com/v3';
+	private $lastApiError = '';
+	private $maxVerificationRetries = 4;
+	private $retryDelays = array(30, 120, 600, 1800);
 
 	public function index() {
 		$this->load->language('extension/payment/paydo');
+		$methods_mode = (bool)$this->config->get('payment_paydo_methods_mode');
+		$payment_methods = $methods_mode ? $this->getCheckoutMethods() : array();
+		$hosted_page_enabled = $this->isHostedPageEnabled();
 
 		$data = array(
 			'button_pay' => $this->language->get('button_pay'),
-			'paydo_url'  => $this->url->link('extension/payment/paydo/pay')
+			'paydo_url' => $this->url->link('extension/payment/paydo/pay', '', true),
+			'methods_mode' => $methods_mode,
+			'hosted_page_enabled' => $hosted_page_enabled,
+			'payment_methods' => $payment_methods,
+			'option_count' => $methods_mode ? count($payment_methods) + ($hosted_page_enabled ? 1 : 0) : 0,
+			'result_url' => $this->url->link('extension/payment/paydo/result', '', true),
+			'text_choose_method' => $this->language->get('text_choose_method'),
+			'text_hosted_page' => $this->language->get('text_hosted_page'),
+			'text_hosted_page_description' => $this->language->get('text_hosted_page_description'),
+			'error_method_required' => $this->language->get('error_method_required'),
+			'error_payment' => $this->language->get('error_payment')
 		);
 
 		return $this->load->view('extension/payment/paydo', $data);
 	}
 
 	public function pay() {
+		$this->load->language('extension/payment/paydo');
 		$this->response->addHeader('Content-Type: application/json');
 
+		if (!isset($this->request->server['REQUEST_METHOD']) || $this->request->server['REQUEST_METHOD'] !== 'POST') {
+			$this->jsonResponse(array('error' => $this->language->get('error_payment')));
+			return;
+		}
+
 		if (empty($this->session->data['order_id'])) {
-			$this->response->setOutput(json_encode(array(
-				'error' => 'Order not found'
-			)));
+			$this->jsonResponse(array('error' => $this->language->get('error_order')));
 			return;
 		}
 
 		$order_id = (int)$this->session->data['order_id'];
-
 		$this->load->model('checkout/order');
 		$this->load->model('extension/payment/paydo');
 		$order_info = $this->model_checkout_order->getOrder($order_id);
 
 		if (!$order_info) {
-			$this->response->setOutput(json_encode(array(
-				'error' => 'Order not found'
-			)));
+			$this->jsonResponse(array('error' => $this->language->get('error_order')));
 			return;
 		}
 
-		$order_products = $this->model_checkout_order->getOrderProducts($order_id);
+		if (!$this->isValidPaydoOrder($order_info)) {
+			$this->jsonResponse(array('error' => $this->language->get('error_payment')));
+			return;
+		}
 
-		$paydo_order_items = array();
+		$selected_method = $this->getRequestedPaymentMethod();
+
+		if ($selected_method === false) {
+			$this->jsonResponse(array('error' => $this->language->get('error_method_required')));
+			return;
+		}
+
+		$existing_invoice = $this->model_extension_payment_paydo->getInvoiceByOrderId($order_id);
+
+		if ($this->canReuseInvoice($existing_invoice)) {
+			if (isset($existing_invoice['invoice_status']) && (int)$existing_invoice['invoice_status'] === 1) {
+				$this->jsonResponse(array('redirect' => $this->url->link('extension/payment/paydo/result', '', true), 'reused' => true));
+				return;
+			}
+
+			$verification = $this->verifyAndApply($existing_invoice, $order_info, null, '', false);
+
+			if ($verification === 'paid') {
+				$this->jsonResponse(array('redirect' => $this->url->link('extension/payment/paydo/result', '', true)));
+				return;
+			}
+
+			if ($verification === 'manual') {
+				$this->jsonResponse(array('redirect' => $this->url->link('extension/payment/paydo/result', '', true), 'reused' => true));
+				return;
+			}
+
+			if ($verification === 'failed') {
+				$this->jsonResponse(array('redirect' => $this->url->link('extension/payment/paydo/result', '', true)));
+				return;
+			}
+
+			if (!$this->matchesInvoiceMethod($existing_invoice, $selected_method)) {
+				$this->jsonResponse(array('error' => $this->language->get('error_active_method')));
+				return;
+			}
+
+			$redirect_url = $this->buildCheckoutUrl($existing_invoice['invoice_id']);
+
+			if ($redirect_url !== '') {
+				$this->jsonResponse(array('redirect' => $redirect_url, 'reused' => true));
+				return;
+			}
+		}
+
+		$order_products = $this->model_checkout_order->getOrderProducts($order_id);
+		$items = array();
 
 		foreach ($order_products as $product) {
-			$paydo_order_items[] = array(
-				'id'	=> (string)$product['order_product_id'],
-				'name'  => trim($product['name'] . ' ' . $product['model']),
-				'price' => (float)$product['price'],
+			$items[] = array(
+				'id' => (string)$product['order_product_id'],
+				'name' => trim($product['name'] . ' ' . $product['model']),
+				'price' => (float)$product['price']
 			);
 		}
 
-		$amount = (float)$order_info['total'];
-		$amount = number_format($amount, 2, '.', '');
-
+		$amount = $this->normalizeAmount($order_info['total']);
 		$request = array(
-			'publicKey' => $this->config->get('payment_paydo_public_id'),
-			'order'	 => array(
-				'id'		  => $order_info['order_id'],
-				'amount'	  => $amount,
-				'currency'	=> $order_info['currency_code'],
+			'publicKey' => (string)$this->config->get('payment_paydo_public_id'),
+			'order' => array(
+				'id' => (string)$order_info['order_id'],
+				'amount' => $amount,
+				'currency' => (string)$order_info['currency_code'],
 				'description' => sprintf($this->language->get('order_description'), $order_info['order_id']),
-				'items'	   => $paydo_order_items,
+				'items' => $items
 			),
-			'payer'	 => array(
-				'email' => $order_info['email'],
-				'phone' => $order_info['telephone'],
-				'name'  => $order_info['firstname'] . ' ' . $order_info['lastname']
+			'payer' => array(
+				'email' => (string)$order_info['email'],
+				'phone' => (string)$order_info['telephone'],
+				'name' => trim((string)$order_info['firstname'] . ' ' . (string)$order_info['lastname'])
 			),
-			'resultUrl' => $this->url->link('checkout/success'),
-			'failPath'  => $this->url->link('checkout/failure'),
-			'language'  => $this->language->get('code')
+			'language' => $this->getPaydoLanguageCode(),
+			'productUrl' => $this->url->link('common/home', '', true),
+			'resultUrl' => $this->url->link('extension/payment/paydo/result', '', true),
+			'failPath' => $this->url->link('extension/payment/paydo/failure', '', true)
 		);
 
 		$request['signature'] = $this->generate_order_signature($request['order']);
 
-		$invoiceId = $this->makeRequest($request);
 
-		if ($invoiceId === '') {
-			$this->response->setOutput(json_encode(array(
-				'error' => 'Invoice not created'
-			)));
+		$request = $this->addPaymentMethodToRequest($request, $selected_method);
+
+		$invoice_id = $this->makeRequest($request);
+
+		if ($invoice_id === '') {
+			$this->jsonResponse(array('error' => $this->language->get('error_invoice')));
+			return;
+		}
+
+		$this->model_extension_payment_paydo->saveInvoice($order_info, $invoice_id, $selected_method);
+		$this->setOrderStatusIfChanged($order_info, (int)$this->config->get('payment_paydo_order_status_wait'));
+
+		$redirect_url = $this->buildCheckoutUrl($invoice_id);
+
+		if ($redirect_url === '') {
+			$this->logCallback('Rejected invoice redirect', array('order_id' => $order_id, 'invoice_id' => $invoice_id));
+			$this->jsonResponse(array('error' => $this->language->get('error_invoice')));
+			return;
+		}
+
+		$this->jsonResponse(array('redirect' => $redirect_url));
+	}
+
+	public function result() {
+		$this->load->language('extension/payment/paydo');
+
+		$data = array(
+			'heading_title' => $this->language->get('heading_payment_result'),
+			'text_status_wait' => $this->language->get('text_status_wait'),
+			'text_status_paid' => $this->language->get('text_status_paid'),
+			'text_status_manual' => $this->language->get('text_status_manual'),
+			'text_status_failed' => $this->language->get('text_payment_failure'),
+			'verify_url' => $this->url->link('extension/payment/paydo/verify', '', true),
+			'success_url' => $this->url->link('checkout/success', '', true),
+			'continue' => $this->url->link('common/home', '', true),
+			'button_continue' => $this->language->get('button_continue'),
+			'header' => $this->load->controller('common/header'),
+			'column_left' => $this->load->controller('common/column_left'),
+			'column_right' => $this->load->controller('common/column_right'),
+			'content_top' => $this->load->controller('common/content_top'),
+			'content_bottom' => $this->load->controller('common/content_bottom'),
+			'footer' => $this->load->controller('common/footer')
+		);
+
+		$this->response->setOutput($this->load->view('extension/payment/paydo_result', $data));
+	}
+
+	public function failure() {
+		$this->load->language('extension/payment/paydo');
+
+		$data = array(
+			'heading_title' => $this->language->get('heading_payment_failure'),
+			'text_message' => $this->language->get('text_payment_failure'),
+			'continue' => $this->url->link('checkout/checkout', '', true),
+			'button_continue' => $this->language->get('button_continue'),
+			'header' => $this->load->controller('common/header'),
+			'column_left' => $this->load->controller('common/column_left'),
+			'column_right' => $this->load->controller('common/column_right'),
+			'content_top' => $this->load->controller('common/content_top'),
+			'content_bottom' => $this->load->controller('common/content_bottom'),
+			'footer' => $this->load->controller('common/footer')
+		);
+
+		$this->response->setOutput($this->load->view('extension/payment/paydo_failure', $data));
+	}
+
+	public function verify() {
+		$this->load->language('extension/payment/paydo');
+		$this->response->addHeader('Content-Type: application/json');
+
+		if (!isset($this->request->server['REQUEST_METHOD']) || $this->request->server['REQUEST_METHOD'] !== 'POST' || empty($this->session->data['order_id'])) {
+			$this->jsonResponse(array('status' => 'manual', 'message' => $this->language->get('text_status_manual')));
+			return;
+		}
+
+		$order_id = (int)$this->session->data['order_id'];
+		$this->load->model('checkout/order');
+		$this->load->model('extension/payment/paydo');
+		$order_info = $this->model_checkout_order->getOrder($order_id);
+		$stored_invoice = $this->model_extension_payment_paydo->getInvoiceByOrderId($order_id);
+
+		if (!$this->isValidPaydoOrder($order_info) || !$stored_invoice) {
+			$this->jsonResponse(array('status' => 'manual', 'message' => $this->language->get('text_status_manual')));
+			return;
+		}
+
+		$state = isset($stored_invoice['transaction_state']) && $stored_invoice['transaction_state'] !== null
+			? (int)$stored_invoice['transaction_state'] : null;
+		$status = $this->verifyAndApply($stored_invoice, $order_info, $state, isset($stored_invoice['txid']) ? $stored_invoice['txid'] : '', false);
+
+		if ($status === 'paid') {
+			$this->jsonResponse(array('status' => 'paid', 'redirect' => $this->url->link('checkout/success', '', true)));
+		} elseif ($status === 'manual' || $status === 'invalid') {
+			$this->jsonResponse(array('status' => 'manual', 'message' => $this->language->get('text_status_manual')));
+		} elseif ($status === 'failed') {
+			$this->jsonResponse(array('status' => 'failed', 'message' => $this->language->get('text_payment_failure')));
 		} else {
-			$this->model_extension_payment_paydo->saveInvoice($order_info['order_id'], $invoiceId);
-
-			$this->model_checkout_order->addOrderHistory(
-				$order_info['order_id'],
-				$this->config->get('payment_paydo_order_status_wait')
-			);
-
-			$redirectUrl = $this->buildCheckoutUrl($invoiceId);
-
-			if ($redirectUrl === '') {
-				$this->logCallback('Rejected invoice redirect: invalid invoice identifier', array('invoice_id' => $invoiceId));
-				$this->response->setOutput(json_encode(array(
-					'error' => 'Invalid invoice identifier'
-				)));
-				return;
-			}
-
-			$this->response->setOutput(json_encode($redirectUrl));
+			$this->jsonResponse(array('status' => 'pending', 'message' => $this->language->get('text_status_wait')));
 		}
 	}
 
 	public function callback() {
-		if ($this->request->server['REQUEST_METHOD'] !== 'POST') {
+		if (!isset($this->request->server['REQUEST_METHOD']) || $this->request->server['REQUEST_METHOD'] !== 'POST') {
 			return;
 		}
 
@@ -127,390 +264,552 @@ class ControllerExtensionPaymentPaydo extends Controller {
 		$callback = json_decode($raw, true);
 
 		if (!is_array($callback)) {
-			$this->logCallback('Rejected callback: invalid JSON payload');
+			$this->logCallback('Rejected callback: invalid JSON');
 			return;
 		}
 
+		$this->load->model('checkout/order');
+		$this->load->model('extension/payment/paydo');
+
 		if (isset($callback['invoice'])) {
-			$check = $this->callback_check($callback);
-
-			if ($check !== 'valid') {
-				$this->logCallback('Rejected callback: invalid new-format payload', $callback);
+			if (!$this->isValidCallbackStructure($callback)) {
+				$this->logCallback('Rejected callback: invalid structure');
 				return;
 			}
 
-			$this->load->model('checkout/order');
-			$this->load->model('extension/payment/paydo');
-
+			$invoice_id = $this->normalizeInvoiceId($callback['invoice']['id']);
+			$callback_order_id = (int)$callback['transaction']['order']['id'];
 			$state = (int)$callback['transaction']['state'];
-			$orderId = (int)$callback['transaction']['order']['id'];
-			$invoiceId = (string)$callback['invoice']['id'];
+			$callback_txid = $this->extractCallbackTxid($callback);
+			$stored_invoice = $this->model_extension_payment_paydo->getInvoiceByInvoiceId($invoice_id);
 
-			$order_info = $this->model_checkout_order->getOrder($orderId);
+			if (!$stored_invoice || (int)$stored_invoice['order_id'] !== $callback_order_id) {
+				$this->logCallback('Rejected callback: invoice mapping mismatch', array('order_id' => $callback_order_id, 'invoice_id' => $invoice_id));
+				return;
+			}
+
+			$order_info = $this->model_checkout_order->getOrder((int)$stored_invoice['order_id']);
 
 			if (!$this->isValidPaydoOrder($order_info)) {
-				$this->logCallback('Rejected callback: target order is not a Paydo order', $callback);
+				$this->logCallback('Rejected callback: non-PayDo order', array('order_id' => $callback_order_id, 'invoice_id' => $invoice_id));
 				return;
 			}
 
-			$storedInvoiceId = $this->model_extension_payment_paydo->getInvoiceIdByOrderId($orderId);
-
-			if ($storedInvoiceId === '' || !hash_equals($storedInvoiceId, $invoiceId)) {
-				$this->logCallback('Rejected callback: invoice is not linked to order', $callback);
+			if (!empty($stored_invoice['txid']) && $callback_txid !== '' && !hash_equals((string)$stored_invoice['txid'], $callback_txid)) {
+				$this->logCallback('Rejected callback: transaction mismatch', array('order_id' => $callback_order_id, 'invoice_id' => $invoice_id, 'state' => $state));
 				return;
 			}
 
-			$invoice = $this->getInvoice($invoiceId);
+			$result = $this->verifyAndApply($stored_invoice, $order_info, $state, $callback_txid, true);
+			$this->logCallback('Processed callback: ' . $result, array('order_id' => $callback_order_id, 'invoice_id' => $invoice_id, 'state' => $state));
 
-			if (!$this->isVerifiedInvoice($invoice, $order_info, $callback)) {
-				$this->logCallback('Rejected callback: invoice verification failed', $callback);
-				return;
+			if ($result === 'pending' || $result === 'error') {
+				$this->response->addHeader('HTTP/1.1 503 Service Unavailable');
 			}
 
-			if ($state === 2) {
-				$this->model_checkout_order->addOrderHistory(
-					$orderId,
-					$this->config->get('payment_paydo_order_status_success')
-				);
-				$this->logCallback('Processed successful Paydo callback', $callback);
-			} elseif (in_array($state, array(3, 5), true)) {
-				$this->model_checkout_order->addOrderHistory(
-					$orderId,
-					$this->config->get('payment_paydo_order_status_error')
-				);
-				$this->logCallback('Processed failed Paydo callback', $callback);
-			}
-		} else {
-			if (!isset($callback['orderId'], $callback['amount'], $callback['currency'], $callback['status'], $callback['signature'])) {
-				$this->logCallback('Rejected callback: unsupported payload format', $callback);
-				return;
-			}
+			return;
+		}
 
-			$signature = $this->generate_legacy_signature(
-				$callback['orderId'],
-				$callback['amount'],
-				$callback['currency'],
-				$this->config->get('payment_paydo_secret_key'),
-				$callback['status']
-			);
+		$this->processLegacyCallback($callback);
+	}
 
-			if (!hash_equals($signature, (string)$callback['signature'])) {
-				$this->logCallback('Rejected callback: invalid legacy signature', $callback);
-				return;
-			}
+	private function processLegacyCallback($callback) {
+		if (!isset($callback['orderId'], $callback['amount'], $callback['currency'], $callback['status'], $callback['signature'])) {
+			$this->logCallback('Rejected callback: unsupported legacy structure');
+			return;
+		}
 
-			$this->load->model('checkout/order');
-			$order_info = $this->model_checkout_order->getOrder((int)$callback['orderId']);
+		$signature = $this->generate_legacy_signature(
+			$callback['orderId'],
+			$callback['amount'],
+			$callback['currency'],
+			$this->config->get('payment_paydo_secret_key'),
+			$callback['status']
+		);
 
-			if (!$this->isValidPaydoOrder($order_info)) {
-				$this->logCallback('Rejected callback: legacy callback targets non-Paydo order', $callback);
-				return;
-			}
+		if (!hash_equals($signature, (string)$callback['signature'])) {
+			$this->logCallback('Rejected callback: invalid legacy signature', array('order_id' => (int)$callback['orderId']));
+			return;
+		}
 
-			if (!$this->isMatchingLegacyOrder($order_info, $callback)) {
-				$this->logCallback('Rejected callback: legacy callback payload does not match order', $callback);
-				return;
-			}
+		$order_id = (int)$callback['orderId'];
+		$order_info = $this->model_checkout_order->getOrder($order_id);
+		$stored_invoice = $this->model_extension_payment_paydo->getInvoiceByOrderId($order_id);
 
-			if ($callback['status'] === 'success') {
-				$this->model_checkout_order->addOrderHistory(
-					(int)$callback['orderId'],
-					$this->config->get('payment_paydo_order_status_success')
-				);
-				$this->logCallback('Processed successful legacy Paydo callback', $callback);
-			} elseif ($callback['status'] === 'error') {
-				$this->model_checkout_order->addOrderHistory(
-					(int)$callback['orderId'],
-					$this->config->get('payment_paydo_order_status_error')
-				);
-				$this->logCallback('Processed failed legacy Paydo callback', $callback);
-			}
+		if (!$this->isValidPaydoOrder($order_info) || !$stored_invoice || !$this->isMatchingLegacyOrder($order_info, $callback)) {
+			$this->logCallback('Rejected callback: legacy order mismatch', array('order_id' => $order_id));
+			return;
+		}
+
+		$state = $callback['status'] === 'success' ? 2 : ($callback['status'] === 'error' ? 3 : null);
+		$result = $this->verifyAndApply($stored_invoice, $order_info, $state, '', true);
+		$this->logCallback('Processed legacy callback: ' . $result, array('order_id' => $order_id));
+
+		if ($result === 'pending' || $result === 'error') {
+			$this->response->addHeader('HTTP/1.1 503 Service Unavailable');
 		}
 	}
 
-	/**
-	 * Validates the callback structure for the new format (invoice + transaction).
-	 *
-	 * @param array $callback Callback request data.
-	 * @return string Returns "valid" if the validation passes, otherwise an error message.
-	 */
-	private function callback_check($callback) {
-		$invoiceId = isset($callback['invoice']['id']) ? $callback['invoice']['id'] : null;
-		$txid	  = isset($callback['invoice']['txid']) ? $callback['invoice']['txid'] : null;
-		$orderId   = isset($callback['transaction']['order']['id']) ? $callback['transaction']['order']['id'] : null;
-		$state	 = isset($callback['transaction']['state']) ? $callback['transaction']['state'] : null;
-
-		if (!$invoiceId) {
-			return 'Empty invoice id';
-		}
-		if (!$txid) {
-			return 'Empty transaction id';
-		}
-		if (!$orderId) {
-			return 'Empty order id';
-		}
-		if (!is_numeric($state) || (int)$state < 1 || (int)$state > 5) {
-			return 'State is not valid: ' . var_export($state, true);
+	private function verifyAndApply($stored_invoice, $order_info, $state, $callback_txid, $force) {
+		// Delayed callbacks must never downgrade a confirmed payment.
+		if (isset($stored_invoice['invoice_status']) && (int)$stored_invoice['invoice_status'] === 1) {
+			return 'paid';
 		}
 
-		return 'valid';
+		$invoice_id = isset($stored_invoice['invoice_id']) ? $this->normalizeInvoiceId($stored_invoice['invoice_id']) : '';
+
+		if ($invoice_id === '') {
+			return 'invalid';
+		}
+
+		if (!$force) {
+			if (isset($stored_invoice['retry_count']) && (int)$stored_invoice['retry_count'] >= $this->maxVerificationRetries) {
+				return 'manual';
+			}
+
+			if (!empty($stored_invoice['next_retry_at']) && strtotime($stored_invoice['next_retry_at']) > time()) {
+				return 'pending';
+			}
+		}
+
+		$invoice = $this->getInvoice($invoice_id);
+
+		if (!$invoice) {
+			return $this->scheduleVerificationRetry((int)$order_info['order_id'], $this->lastApiError !== '' ? $this->lastApiError : 'invoice_unavailable');
+		}
+
+		if (!$this->isVerifiedInvoice($invoice, $stored_invoice, $order_info, $invoice_id, $callback_txid)) {
+			return 'invalid';
+		}
+
+		$invoice_status = isset($invoice['status']) ? (int)$invoice['status'] : null;
+		$remote_state = $this->extractInvoiceState($invoice);
+
+		// Terminal decisions require API confirmation, not the callback's state.
+		$state = $remote_state;
+		$remote_txid = $this->extractInvoiceTxid($invoice);
+		// Persist only identifiers independently returned by PayDo.
+		$txid = $remote_txid;
+		$this->model_extension_payment_paydo->updateInvoice((int)$order_info['order_id'], $invoice_id, $txid, $invoice_status, $state);
+
+		if ($invoice_status === 1) {
+			$this->setOrderStatusIfChanged($order_info, (int)$this->config->get('payment_paydo_order_status_success'));
+			$this->model_extension_payment_paydo->clearRetry((int)$order_info['order_id']);
+			return 'paid';
+		}
+
+		if (in_array($invoice_status, array(3, 5), true) || in_array((int)$state, array(3, 5), true)) {
+			$this->setOrderStatusIfChanged($order_info, (int)$this->config->get('payment_paydo_order_status_error'));
+			$this->model_extension_payment_paydo->clearRetry((int)$order_info['order_id']);
+			return 'failed';
+		}
+
+		return $this->scheduleVerificationRetry((int)$order_info['order_id'], 'invoice_not_paid');
 	}
 
-	private function getInvoice($invoiceId) {
-		if (!$this->curl) {
-			$this->curl = curl_init();
-			curl_setopt($this->curl, CURLOPT_RETURNTRANSFER, true);
-			curl_setopt($this->curl, CURLOPT_HEADER, false);
-			curl_setopt($this->curl, CURLOPT_SSL_VERIFYPEER, true);
-			curl_setopt($this->curl, CURLOPT_SSL_VERIFYHOST, 2);
+	private function scheduleVerificationRetry($order_id, $reason) {
+		$stored = $this->model_extension_payment_paydo->getInvoiceByOrderId($order_id);
+		$current_count = isset($stored['retry_count']) ? (int)$stored['retry_count'] : 0;
+		$delay_index = min($current_count, count($this->retryDelays) - 1);
+		$count = $this->model_extension_payment_paydo->scheduleRetry(
+			$order_id,
+			$reason,
+			$this->retryDelays[$delay_index],
+			$this->maxVerificationRetries
+		);
+
+		return $count >= $this->maxVerificationRetries ? 'manual' : ($reason === 'invoice_not_paid' ? 'pending' : 'error');
+	}
+
+	private function isVerifiedInvoice($invoice, $stored_invoice, $order_info, $invoice_id, $callback_txid) {
+		$remote_invoice_id = isset($invoice['identifier']) ? (string)$invoice['identifier'] : '';
+		$remote_order_id = isset($invoice['orderIdentifier']) ? (string)$invoice['orderIdentifier']
+			: (isset($invoice['order']['id']) ? (string)$invoice['order']['id'] : '');
+		$remote_amount = isset($invoice['amount']) ? $this->normalizeAmount($invoice['amount']) : '';
+		$remote_currency = isset($invoice['currency']) ? strtoupper((string)$invoice['currency']) : '';
+		$remote_txid = $this->extractInvoiceTxid($invoice);
+		$stored_txid = isset($stored_invoice['txid']) ? (string)$stored_invoice['txid'] : '';
+		$stored_amount = isset($stored_invoice['amount']) ? $this->normalizeAmount($stored_invoice['amount']) : '';
+		$stored_currency = isset($stored_invoice['currency']) ? strtoupper((string)$stored_invoice['currency']) : '';
+
+		if ($stored_amount !== '' && !hash_equals($stored_amount, $this->normalizeAmount($order_info['total']))) {
+			return false;
 		}
 
-		curl_setopt($this->curl, CURLOPT_URL, $this->paydoApiBase . '/invoices/' . rawurlencode($invoiceId));
-		curl_setopt($this->curl, CURLOPT_HTTPHEADER, array('Content-Type: application/json'));
-		curl_setopt($this->curl, CURLOPT_CUSTOMREQUEST, 'GET');
-		curl_setopt($this->curl, CURLOPT_POSTFIELDS, null);
+		if ($stored_currency !== '' && $stored_currency !== strtoupper((string)$order_info['currency_code'])) {
+			return false;
+		}
+
+		if ($remote_invoice_id === '' || !hash_equals($remote_invoice_id, (string)$invoice_id)) {
+			return false;
+		}
+
+		if ($remote_order_id === '' || !hash_equals($remote_order_id, (string)$order_info['order_id'])) {
+			return false;
+		}
+
+		if ($remote_amount === '' || !hash_equals($remote_amount, $this->normalizeAmount($order_info['total']))) {
+			return false;
+		}
+
+		if ($remote_currency === '' || $remote_currency !== strtoupper((string)$order_info['currency_code'])) {
+			return false;
+		}
+
+		if ($callback_txid !== '' && $remote_txid !== '' && !hash_equals($remote_txid, (string)$callback_txid)) {
+			return false;
+		}
+
+		if ($remote_txid !== '' && $stored_txid !== '' && !hash_equals($remote_txid, $stored_txid)) {
+			return false;
+		}
+
+		return true;
+	}
+
+	private function isValidCallbackStructure($callback) {
+		$invoice_id = isset($callback['invoice']['id']) ? $this->normalizeInvoiceId($callback['invoice']['id']) : '';
+		$order_id = isset($callback['transaction']['order']['id']) ? (int)$callback['transaction']['order']['id'] : 0;
+		$state = isset($callback['transaction']['state']) ? $callback['transaction']['state'] : null;
+
+		return $invoice_id !== '' && $order_id > 0 && is_numeric($state) && (int)$state >= 1 && (int)$state <= 5;
+	}
+
+	private function extractCallbackTxid($callback) {
+		$candidates = array(
+			isset($callback['invoice']['txid']) ? $callback['invoice']['txid'] : '',
+			isset($callback['transaction']['txid']) ? $callback['transaction']['txid'] : '',
+			isset($callback['transaction']['id']) ? $callback['transaction']['id'] : '',
+			isset($callback['transaction']['identifier']) ? $callback['transaction']['identifier'] : '',
+			isset($callback['transaction']['transactionIdentifier']) ? $callback['transaction']['transactionIdentifier'] : ''
+		);
+
+		foreach ($candidates as $candidate) {
+			$candidate = trim((string)$candidate);
+
+			if ($candidate !== '' && strlen($candidate) <= 64) {
+				return $candidate;
+			}
+		}
+
+		return '';
+	}
+
+	private function extractInvoiceTxid($invoice) {
+		$candidates = array(
+			isset($invoice['txid']) ? $invoice['txid'] : '',
+			isset($invoice['transactionIdentifier']) ? $invoice['transactionIdentifier'] : '',
+			isset($invoice['transaction']['txid']) ? $invoice['transaction']['txid'] : '',
+			isset($invoice['transaction']['transactionIdentifier']) ? $invoice['transaction']['transactionIdentifier'] : ''
+		);
+
+		foreach ($candidates as $candidate) {
+			$candidate = trim((string)$candidate);
+
+			if ($candidate !== '' && strlen($candidate) <= 64) {
+				return $candidate;
+			}
+		}
+
+		return '';
+	}
+
+	private function extractInvoiceState($invoice) {
+		$candidates = array(
+			isset($invoice['transactionState']) ? $invoice['transactionState'] : null,
+			isset($invoice['transaction']['state']) ? $invoice['transaction']['state'] : null
+		);
+
+		if (isset($invoice['transactions']) && is_array($invoice['transactions']) && $invoice['transactions']) {
+			$last = end($invoice['transactions']);
+			$candidates[] = is_array($last) && isset($last['state']) ? $last['state'] : null;
+		}
+
+		foreach ($candidates as $candidate) {
+			if (is_numeric($candidate) && (int)$candidate >= 1 && (int)$candidate <= 5) {
+				return (int)$candidate;
+			}
+		}
+
+		return null;
+	}
+
+	private function canReuseInvoice($stored_invoice) {
+		if (!$stored_invoice || empty($stored_invoice['invoice_id']) || $this->normalizeInvoiceId($stored_invoice['invoice_id']) === '') {
+			return false;
+		}
+
+		if (isset($stored_invoice['invoice_status']) && (int)$stored_invoice['invoice_status'] === 1) {
+			return true;
+		}
+
+		$state = isset($stored_invoice['transaction_state']) ? (int)$stored_invoice['transaction_state'] : 0;
+
+		$invoice_status = isset($stored_invoice['invoice_status']) ? (int)$stored_invoice['invoice_status'] : 0;
+
+		return !in_array($state, array(3, 5), true) && !in_array($invoice_status, array(3, 5), true);
+	}
+
+	private function matchesInvoiceMethod($invoice, $selected_method) {
+		$method = isset($invoice['payment_method']) ? (string)$invoice['payment_method'] : 'hosted';
+
+		return $method === (string)$selected_method;
+	}
+
+	private function getCheckoutMethods() {
+		$available = $this->config->get('payment_paydo_available_methods');
+		$enabled = $this->config->get('payment_paydo_enabled_methods');
+
+		if (!is_array($available) || !is_array($enabled)) {
+			return array();
+		}
+
+		$methods = array();
+
+		foreach ($enabled as $identifier) {
+			$identifier = trim((string)$identifier);
+
+			if (!preg_match('/^[1-9][0-9]*$/D', $identifier) || !isset($available[$identifier]) || !is_array($available[$identifier])) {
+				continue;
+			}
+
+			$method = $available[$identifier];
+			$title = isset($method['title']) ? trim((string)$method['title']) : '';
+
+			if ($title === '') {
+				continue;
+			}
+
+			$logo = isset($method['logo']) ? trim((string)$method['logo']) : '';
+
+			if ($logo !== '' && !$this->isSafeRemoteUrl($logo)) {
+				$logo = '';
+			}
+
+			$methods[$identifier] = array('identifier' => $identifier, 'title' => $title, 'logo' => $logo);
+		}
+
+		return $methods;
+	}
+
+	private function getRequestedPaymentMethod() {
+		if (!$this->config->get('payment_paydo_methods_mode')) {
+			return 'hosted';
+		}
+
+		$selected = isset($this->request->post['paydo_method']) ? trim((string)$this->request->post['paydo_method']) : '';
+
+		if ($selected === 'hosted' && $this->isHostedPageEnabled()) {
+			return 'hosted';
+		}
+
+		$methods = $this->getCheckoutMethods();
+
+		if ($selected === '' || !isset($methods[$selected])) {
+			return false;
+		}
+
+		return $selected;
+	}
+
+	private function addPaymentMethodToRequest($request, $selected_method) {
+		unset($request['paymentMethod']);
+
+		if ($selected_method !== 'hosted' && preg_match('/^[1-9][0-9]*$/D', (string)$selected_method)) {
+			$request['paymentMethod'] = (int)$selected_method;
+		}
+
+		return $request;
+	}
+
+	private function isHostedPageEnabled() {
+		$value = $this->config->get('payment_paydo_hosted_page_enabled');
+
+		return $value === null ? true : (bool)$value;
+	}
+
+	private function isSafeRemoteUrl($url) {
+		if (!is_string($url) || !filter_var($url, FILTER_VALIDATE_URL)) {
+			return false;
+		}
+
+		return in_array(strtolower((string)parse_url($url, PHP_URL_SCHEME)), array('http', 'https'), true);
+	}
+
+	private function getPaydoLanguageCode() {
+		$language = strtolower((string)$this->config->get('config_language'));
+
+		return strpos($language, 'ru') === 0 ? 'ru' : 'en';
+	}
+
+	private function getInvoice($invoice_id) {
+		$invoice_id = $this->normalizeInvoiceId($invoice_id);
+
+		if ($invoice_id === '') {
+			$this->lastApiError = 'invalid_invoice_identifier';
+			return array();
+		}
+
+		$response = $this->sendApiRequest($this->paydoApiBase . '/invoices/' . rawurlencode($invoice_id), 'GET');
+
+		if (!isset($response['data']) || !is_array($response['data'])) {
+			return array();
+		}
+
+		return $response['data'];
+	}
+
+	private function makeRequest($request) {
+		$payload = json_encode($request, JSON_UNESCAPED_UNICODE);
+
+		if (!is_string($payload)) {
+			return '';
+		}
+
+		$response = $this->sendApiRequest($this->paydoApiBase . '/invoices/create', 'POST', $payload);
+
+		if (isset($response['data']) && is_string($response['data'])) {
+			return $this->normalizeInvoiceId($response['data']);
+		}
+
+		$id = isset($response['data']['invoice']['identifier']) ? $response['data']['invoice']['identifier']
+			: (isset($response['invoice']['identifier']) ? $response['invoice']['identifier']
+			: (isset($response['identifier']) ? $response['identifier'] : ''));
+
+		return $this->normalizeInvoiceId($id);
+	}
+
+	protected function sendApiRequest($url, $method, $payload = '') {
+		$this->lastApiError = '';
+		$this->curl = curl_init();
+		curl_setopt($this->curl, CURLOPT_URL, $url);
+		curl_setopt($this->curl, CURLOPT_RETURNTRANSFER, true);
+		curl_setopt($this->curl, CURLOPT_HEADER, false);
+		curl_setopt($this->curl, CURLOPT_SSL_VERIFYPEER, true);
+		curl_setopt($this->curl, CURLOPT_SSL_VERIFYHOST, 2);
+		curl_setopt($this->curl, CURLOPT_CONNECTTIMEOUT, 10);
+		curl_setopt($this->curl, CURLOPT_TIMEOUT, 30);
+		curl_setopt($this->curl, CURLOPT_HTTPHEADER, array('Content-Type: application/json', 'Accept: application/json'));
+		curl_setopt($this->curl, CURLOPT_CUSTOMREQUEST, $method);
+		curl_setopt($this->curl, CURLOPT_POSTFIELDS, $method === 'POST' ? $payload : null);
 
 		$response = curl_exec($this->curl);
 
 		if ($response === false) {
+			$this->lastApiError = 'transport_error';
 			curl_close($this->curl);
 			$this->curl = null;
 			return array();
 		}
 
-		$code = curl_getinfo($this->curl, CURLINFO_HTTP_CODE);
+		$http_code = (int)curl_getinfo($this->curl, CURLINFO_HTTP_CODE);
 		curl_close($this->curl);
 		$this->curl = null;
 
-		if ($code < 200 || $code >= 300) {
+		if ($http_code < 200 || $http_code >= 300) {
+			$this->lastApiError = 'http_' . $http_code;
 			return array();
 		}
 
 		$json = json_decode($response, true);
 
-		if (!is_array($json) || !isset($json['data']) || !is_array($json['data'])) {
+		if (!is_array($json)) {
+			$this->lastApiError = 'invalid_json';
 			return array();
 		}
 
-		return $json['data'];
-	}
-
-	private function isVerifiedInvoice($invoice, $order_info, $callback) {
-		if (!$invoice || !$order_info) {
-			return false;
-		}
-
-		$invoiceId = isset($callback['invoice']['id']) ? (string)$callback['invoice']['id'] : '';
-		$callbackOrderId = isset($callback['transaction']['order']['id']) ? (string)$callback['transaction']['order']['id'] : '';
-		$callbackState = isset($callback['transaction']['state']) ? (int)$callback['transaction']['state'] : null;
-
-		$remoteInvoiceId = isset($invoice['identifier']) ? (string)$invoice['identifier'] : $invoiceId;
-		$remoteOrderId = isset($invoice['orderIdentifier']) ? (string)$invoice['orderIdentifier']
-			: (isset($invoice['order']['id']) ? (string)$invoice['order']['id'] : '');
-		$remoteAmount = isset($invoice['amount']) ? $this->normalizeAmount($invoice['amount']) : '';
-		$remoteCurrency = isset($invoice['currency']) ? (string)$invoice['currency'] : '';
-		$remoteStatus = isset($invoice['status']) ? (int)$invoice['status'] : null;
-		$remoteTxid = isset($invoice['txid']) ? (string)$invoice['txid']
-			: (isset($invoice['transaction']['txid']) ? (string)$invoice['transaction']['txid'] : '');
-
-		if ($remoteInvoiceId === '' || !hash_equals($remoteInvoiceId, $invoiceId)) {
-			return false;
-		}
-
-		if ($remoteOrderId === '' || !hash_equals($remoteOrderId, $callbackOrderId)) {
-			return false;
-		}
-
-		if (!hash_equals($remoteOrderId, (string)$order_info['order_id'])) {
-			return false;
-		}
-
-		if ($remoteAmount === '' || !hash_equals($remoteAmount, $this->normalizeAmount($order_info['total']))) {
-			return false;
-		}
-
-		if ($remoteCurrency === '' || strtoupper($remoteCurrency) !== strtoupper($order_info['currency_code'])) {
-			return false;
-		}
-
-		if ($remoteTxid !== '' && isset($callback['invoice']['txid']) && !hash_equals($remoteTxid, (string)$callback['invoice']['txid'])) {
-			return false;
-		}
-
-		if ($callbackState === 2) {
-			return $remoteStatus === 1;
-		}
-
-		if (in_array($callbackState, array(3, 5), true)) {
-			return $remoteStatus !== 1;
-		}
-
-		return false;
+		return $json;
 	}
 
 	private function isValidPaydoOrder($order_info) {
-		$paymentCode = isset($order_info['payment_code']) ? (string)$order_info['payment_code'] : '';
+		$payment_code = isset($order_info['payment_code']) ? strtolower((string)$order_info['payment_code']) : '';
 
-		return is_array($order_info)
-			&& !empty($order_info['order_id'])
-			&& $paymentCode !== ''
-			&& strpos($paymentCode, 'paydo') === 0;
+		return is_array($order_info) && !empty($order_info['order_id']) && strpos($payment_code, 'paydo') === 0;
 	}
 
 	private function isMatchingLegacyOrder($order_info, $callback) {
-		if (!$order_info) {
-			return false;
-		}
-
 		return $this->normalizeAmount($order_info['total']) === $this->normalizeAmount($callback['amount'])
-			&& strtoupper($order_info['currency_code']) === strtoupper((string)$callback['currency']);
+			&& strtoupper((string)$order_info['currency_code']) === strtoupper((string)$callback['currency']);
+	}
+
+	private function setOrderStatusIfChanged($order_info, $status_id) {
+		$status_id = (int)$status_id;
+
+		if ($status_id > 0 && (int)$order_info['order_status_id'] !== $status_id) {
+			$this->model_checkout_order->addOrderHistory((int)$order_info['order_id'], $status_id);
+		}
 	}
 
 	private function normalizeAmount($amount) {
 		return number_format((float)$amount, 2, '.', '');
 	}
 
-	private function logCallback($message, $context = array()) {
-		$line = '[Paydo callback] ' . $message;
+	private function normalizeInvoiceId($invoice_id) {
+		$invoice_id = trim((string)$invoice_id);
 
-		if ($context) {
-			$line .= ' | ' . json_encode($context, JSON_UNESCAPED_UNICODE);
+		return $this->isValidInvoiceId($invoice_id) ? $invoice_id : '';
+	}
+
+	private function isValidInvoiceId($invoice_id) {
+		return $invoice_id !== '' && strlen($invoice_id) <= 64 && preg_match('/^[A-Za-z0-9-]+$/D', $invoice_id);
+	}
+
+	private function buildCheckoutUrl($invoice_id) {
+		$invoice_id = $this->normalizeInvoiceId($invoice_id);
+
+		if ($invoice_id === '') {
+			return '';
+		}
+
+		return 'https://checkout.paydo.com/' . rawurlencode($this->getPaydoLanguageCode()) . '/payment/invoice-preprocessing/' . rawurlencode($invoice_id);
+	}
+
+	private function generate_order_signature($order) {
+		$values = array(
+			'amount' => (string)$order['amount'],
+			'currency' => (string)$order['currency'],
+			'id' => (string)$order['id']
+		);
+		ksort($values, SORT_STRING);
+		$data = array_values($values);
+		$data[] = (string)$this->config->get('payment_paydo_secret_key');
+
+		return hash('sha256', implode(':', $data));
+	}
+
+	private function generate_legacy_signature($order_id, $amount, $currency, $secret_key, $status) {
+		$values = array('id' => (string)$order_id, 'amount' => (string)$amount, 'currency' => (string)$currency);
+		ksort($values, SORT_STRING);
+		$data = array_values($values);
+
+		if ($status) {
+			$data[] = (string)$status;
+		}
+
+		$data[] = (string)$secret_key;
+
+		return hash('sha256', implode(':', $data));
+	}
+
+	private function logCallback($message, $context = array()) {
+		$allowed = array();
+
+		foreach (array('order_id', 'invoice_id', 'state') as $key) {
+			if (isset($context[$key])) {
+				$allowed[$key] = (string)$context[$key];
+			}
+		}
+
+		$line = '[PayDo] ' . (string)$message;
+
+		if ($allowed) {
+			$line .= ' | ' . json_encode($allowed, JSON_UNESCAPED_UNICODE);
 		}
 
 		$this->log->write($line);
 	}
 
-	/**
-	 * Creates a Paydo invoice and returns its identifier
-	 *
-	 * @param array $request
-	 * @return string
-	 */
-	private function makeRequest($request = array()) {
-		$payload = json_encode($request, JSON_UNESCAPED_UNICODE);
-
-		if (!$this->curl) {
-			$this->curl = curl_init();
-			curl_setopt($this->curl, CURLOPT_URL, 'https://api.paydo.com/v1/invoices/create');
-			curl_setopt($this->curl, CURLOPT_SSL_VERIFYPEER, true);
-			curl_setopt($this->curl, CURLOPT_SSL_VERIFYHOST, 2);
-			curl_setopt($this->curl, CURLOPT_RETURNTRANSFER, true);
-			curl_setopt($this->curl, CURLOPT_HEADER, false);
-		}
-
-		curl_setopt($this->curl, CURLOPT_HTTPHEADER, array('Content-Type: application/json'));
-		curl_setopt($this->curl, CURLOPT_CUSTOMREQUEST, 'POST');
-		curl_setopt($this->curl, CURLOPT_POSTFIELDS, $payload);
-
-		$response = curl_exec($this->curl);
-
-		if ($response === false) {
-			curl_close($this->curl);
-			$this->curl = null;
-			return '';
-		}
-
-		$code = curl_getinfo($this->curl, CURLINFO_HTTP_CODE);
-		curl_close($this->curl);
-		$this->curl = null;
-
-		if ($code < 200 || $code >= 300) {
-			return '';
-		}
-
-		$json = json_decode($response, true);
-
-		if (!is_array($json)) {
-			return '';
-		}
-
-		if (isset($json['data']) && is_string($json['data']) && $json['data'] !== '') {
-			return $this->normalizeInvoiceId($json['data']);
-		}
-
-		$id = isset($json['data']['invoice']['identifier']) ? $json['data']['invoice']['identifier']
-			: (isset($json['invoice']['identifier']) ? $json['invoice']['identifier']
-			: (isset($json['identifier']) ? $json['identifier'] : ''));
-
-		if ($id !== '') {
-			return $this->normalizeInvoiceId($id);
-		}
-
-		return '';
-	}
-
-	private function normalizeInvoiceId($invoiceId) {
-		$invoiceId = trim((string)$invoiceId);
-
-		if (!$this->isValidInvoiceId($invoiceId)) {
-			return '';
-		}
-
-		return $invoiceId;
-	}
-
-	private function isValidInvoiceId($invoiceId) {
-		return $invoiceId !== ''
-			&& strlen($invoiceId) <= 64
-			&& preg_match('/^[A-Za-z0-9-]+$/', $invoiceId);
-	}
-
-	private function buildCheckoutUrl($invoiceId) {
-		$invoiceId = $this->normalizeInvoiceId($invoiceId);
-
-		if ($invoiceId === '') {
-			return '';
-		}
-
-		return 'https://checkout.paydo.com/' . rawurlencode($this->language->get('code')) . '/payment/invoice-preprocessing/' . rawurlencode($invoiceId);
-	}
-
-	/**
-	 * Signature for invoice creation
-	 *
-	 * @param array $order
-	 * @return string
-	 */
-	private function generate_order_signature($order) {
-		$sign_str = array(
-			'amount'   => (string)$order['amount'],
-			'currency' => (string)$order['currency'],
-			'id'	   => (string)$order['id'],
-		);
-
-		ksort($sign_str, SORT_STRING);
-		$sign_data = array_values($sign_str);
-		$sign_data[] = (string)$this->config->get('payment_paydo_secret_key');
-
-		return hash('sha256', implode(':', $sign_data));
-	}
-
-	/**
-	 * Legacy signature for the old callback format (orderId + amount + currency + status)
-	 *
-	 * @param string|int $orderId
-	 * @param string|float $amount
-	 * @param string $currency
-	 * @param string $secretKey
-	 * @param string $status
-	 * @return string
-	 */
-	private function generate_legacy_signature($orderId, $amount, $currency, $secretKey, $status) {
-		$sign_str = array(
-			'id'	   => (string)$orderId,
-			'amount'   => (string)$amount,
-			'currency' => (string)$currency,
-		);
-
-		ksort($sign_str, SORT_STRING);
-		$sign_data = array_values($sign_str);
-
-		if ($status) {
-			$sign_data[] = (string)$status;
-		}
-
-		$sign_data[] = (string)$secretKey;
-
-		return hash('sha256', implode(':', $sign_data));
+	private function jsonResponse($data) {
+		$this->response->setOutput(json_encode($data, JSON_UNESCAPED_UNICODE));
 	}
 }
